@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Post Shortener</title>
+<style>
+  :root { --bg: #f7f9fa; --ink: #0f1419; --muted: #536471; --line: #e1e8ed; --card: #fff; --blue: #1d9bf0; --green: #00ba7c; --red: #f4212e; --amber: #ffad1f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 26px 16px 56px; }
+  h1 { font-size: 32px; line-height: 1.1; margin: 0; } h1 span { color: var(--blue); } .sub { color: var(--muted); margin: 4px 0 8px; }
+  #status { font-size: 13px; color: var(--muted); margin: 0 0 12px; } #status.ok { color: var(--green); } #status.err { color: var(--red); }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; margin-bottom: 16px; }
+  textarea { width: 100%; min-height: 170px; resize: vertical; font: 17px/1.5 system-ui, sans-serif; padding: 12px; border: 2px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); }
+  textarea:focus-visible, input:focus-visible, button:focus-visible { outline: 3px solid #8ecdf8; outline-offset: 2px; }
+  .meter { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 14px; color: var(--muted); } .meter .bar { flex: 1; height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; } .meter .bar div { height: 100%; }
+  .over { color: var(--red); font-weight: 700; } .fits { color: var(--green); font-weight: 700; }
+  .limits { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 12px; } .limits button { background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 99px; padding: 5px 12px; font-size: 14px; font-weight: 700; } .limits button.on { background: var(--ink); color: #fff; }
+  .limits input[type=number] { width: 90px; font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 99px; } .limits label { display: flex; gap: 6px; align-items: center; font-size: 14px; } .limits input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--blue); }
+  button { font: inherit; font-weight: 700; padding: 10px 20px; border: 0; border-radius: 99px; background: var(--blue); color: #fff; cursor: pointer; }
+  button.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); padding: 5px 12px; font-size: 14px; } button.busy { opacity: .55; cursor: progress; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; } .note { color: var(--muted); font-size: 14px; min-height: 20px; margin: 8px 0 0; }
+  .ver { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; } .ver p { margin: 0 0 8px; white-space: pre-wrap; font-size: 17px; }
+  .fine { color: var(--muted); font-size: 13px; } .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Post <span>Shortener</span></h1>
+  <p class="sub">Too long to post? Paste it here. Get versions that really fit the limit, checked by a real character counter.</p>
+  <p id="status">Checking the AI post shortener...</p>
+  <section class="panel">
+    <textarea id="text" placeholder="Paste your long post, message or bio here..." aria-label="Your text"></textarea>
+    <div class="meter"><span id="inCount">0</span><div class="bar"><div id="inBar"></div></div><span id="inState"></span></div>
+    <div class="limits" id="limits" role="group" aria-label="Character limit"></div>
+    <div class="row"><button id="go">Shorten it</button><button class="ghost" id="sample">Try a sample</button></div>
+    <p class="note" id="note"></p>
+  </section>
+  <section id="out" class="hidden" aria-live="polite"><div id="versions"></div>
+    <p class="fine">Counts treat each emoji as one character. Some apps count links and certain emojis differently, so leave a little room.</p></section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LIMITS = [["X / Twitter", 280], ["Bluesky", 300], ["Threads", 500], ["Bio", 150]];
+const SAMPLE = "Hey everyone!! I'm really, really excited to finally announce that our school robotics club is going to be hosting a totally free beginner coding workshop next Saturday, March 14th, from 10am until 1pm in the library. Honestly, you don't need any experience at all, and we'll actually provide laptops for everyone who needs one. Please bring a friend and sign up at robotics-club.example.com #coding #robotics #STEM";
+let limit = 280, busy = false, ai = { ready: false, message: "Loading...", percent: null, error: null };
+const count = (s) => [...s].length;
+LIMITS.forEach(([n, v]) => { const b = document.createElement("button"); b.textContent = n + " " + v; b.dataset.v = v; b.className = v === limit ? "on" : ""; b.addEventListener("click", () => setLimit(v)); $("limits").append(b); });
+const custom = Object.assign(document.createElement("input"), { type: "number", min: 40, max: 2000, placeholder: "Custom" }); custom.setAttribute("aria-label", "Custom character limit"); custom.addEventListener("input", () => { const v = parseInt(custom.value, 10); if (v >= 40 && v <= 2000) setLimit(v, true); }); $("limits").append(custom);
+const tags = document.createElement("label"); tags.innerHTML = '<input type="checkbox" id="keepTags" checked> Keep hashtags'; $("limits").append(tags);
+function setLimit(v, fromCustom) { limit = v; document.querySelectorAll("#limits button").forEach((b) => b.classList.toggle("on", +b.dataset.v === v)); if (!fromCustom) custom.value = ""; meter(); }
+function meterHtml(n) { const pct = Math.min(100, (n / limit) * 100), color = n > limit ? "var(--red)" : n > limit * 0.9 ? "var(--amber)" : "var(--green)"; return { pct, color }; }
+function meter() { const n = count($("text").value), m = meterHtml(n); $("inCount").textContent = n + " / " + limit; $("inBar").style.width = m.pct + "%"; $("inBar").style.background = m.color; $("inState").className = n > limit ? "over" : "fits"; $("inState").textContent = n > limit ? (n - limit) + " too many" : n ? "fits!" : ""; }
+$("text").addEventListener("input", meter); $("sample").addEventListener("click", () => { $("text").value = SAMPLE; meter(); });
+
+// Rule-based shortening for when the AI isn't ready: cut filler words, use short forms, then trim at a word
+function quickShorten(t) {
+  let s = t.replace(/\s+/g, " ").trim();
+  [[/\b(really|very|totally|honestly|actually|just|basically|literally|so),?\s+/gi, ""], [/\bin order to\b/gi, "to"], [/\band\b/gi, "&"], [/\bplease\b/gi, "pls"], [/\bbecause\b/gi, "bc"], [/\bwith\b/gi, "w/"], [/\bfrom (\d+\s?[ap]m) until\b/gi, "$1 to"], [/\s*!{2,}/g, "!"], [/\bgoing to be\b/gi, "will be"], [/\bfor everyone who needs one\b/gi, "if needed"]].forEach(([a, b]) => (s = s.replace(a, b)));
+  if (!$("keepTags").checked) s = s.replace(/\s*#\w+/g, "").trim();
+  if (count(s) > limit) { const cut = [...s].slice(0, limit - 1).join(""); s = cut.slice(0, cut.lastIndexOf(" ") > limit * 0.6 ? cut.lastIndexOf(" ") : cut.length).replace(/[,.;:\s]+$/, "") + "\u2026"; }
+  return s;
+}
+function show(list, label) {
+  $("out").classList.remove("hidden"); const box = $("versions"); box.innerHTML = ""; const h = document.createElement("p"); h.className = "note"; h.textContent = label; box.append(h);
+  list.forEach((v) => { const d = document.createElement("div"); d.className = "ver"; const p = document.createElement("p"); p.textContent = v; const n = count(v), m = meterHtml(n);
+    const mt = document.createElement("div"); mt.className = "meter"; const c = document.createElement("span"); c.textContent = n + " / " + limit; const bar = document.createElement("div"); bar.className = "bar"; const f = document.createElement("div"); f.style.width = m.pct + "%"; f.style.background = m.color; bar.append(f);
+    const st = document.createElement("span"); st.className = n > limit ? "over" : "fits"; st.textContent = n > limit ? "still too long" : "\u2713 fits"; const cp = document.createElement("button"); cp.className = "ghost"; cp.textContent = "Copy";
+    cp.addEventListener("click", async () => { try { await navigator.clipboard.writeText(v); cp.textContent = "Copied!"; } catch { cp.textContent = "Press Ctrl+C"; } }); const use = document.createElement("button"); use.className = "ghost"; use.textContent = "Edit this one"; use.addEventListener("click", () => { $("text").value = v; meter(); $("text").focus(); window.scrollTo({ top: 0, behavior: "smooth" }); });
+    mt.append(c, bar, st, cp, use); d.append(p, mt); box.append(d); });
+}
+async function go() {
+  if (busy) return; const text = $("text").value.trim(); if (count(text) < 10) { $("note").textContent = "Paste your text first (or try the sample)."; return $("text").focus(); }
+  if (count(text) <= limit) { $("note").textContent = "Good news: it already fits (" + count(text) + " of " + limit + ")! Pick a smaller limit to shorten it more."; return; }
+  if (!ai.ready) { show([quickShorten(text)], "Quick rule-based version (AI loading): filler words removed and short forms used."); $("note").textContent = (ai.error ? "The AI isn't available" : "The AI is still loading" + (ai.percent != null ? " (" + ai.percent + "%)" : "")) + ", so this used simple rules."; return; }
+  busy = true; $("go").classList.add("busy"); $("note").textContent = "Trimming to " + limit + " characters...";
+  try { const res = await fetch("/api/shorten", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, limit, keepTags: $("keepTags").checked }) }); const r = await res.json(); if (!res.ok) throw new Error(r.error); show(r, r.length + " version" + (r.length > 1 ? "s" : "") + " from the on-device AI, each checked to fit " + limit + " characters:"); $("note").textContent = ""; }
+  catch (err) { show([quickShorten(text)], "Quick rule-based version"); $("note").textContent = "The AI had a problem (" + err.message + "), so this used simple rules."; }
+  busy = false; $("go").classList.remove("busy");
+}
+$("go").addEventListener("click", go); $("text").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) go(); });
+
+async function checkStatus() {
+  try { ai = await (await fetch("/api/status")).json();
+    if (ai.error) return setStatus("AI error: " + ai.error + ". Rule-based shortening still works.", "err");
+    if (ai.ready) return setStatus("AI post shortener ready. It runs on your device. Tip: Ctrl+Enter shortens.", "ok");
+    setStatus(ai.message + (ai.percent != null ? " " + ai.percent + "%" : "") + " Rule-based shortening works meanwhile.");
+  } catch { ai = { ready: false, error: "the server can't be reached" }; setStatus("Can't reach the server. Open http://localhost:3069 and make sure npm start is running.", "err"); return; }
+  setTimeout(checkStatus, 1500);
+}
+function setStatus(t, c = "") { $("status").textContent = t; $("status").className = c; }
+meter(); checkStatus();
+</script>
+</body>
+</html>
